@@ -1,0 +1,102 @@
+import React, { useState, useRef, useEffect } from 'react';
+
+const App = () => {
+    const [videoFile, setVideoFile] = useState(null); // Estado para armazenar o arquivo de vídeo selecionado
+    const [videoUrl, setVideoUrl] = useState('');     // Estado para armazenar a URL do objeto para o vídeo
+    const videoRef = useRef(null);                    // Referência para o elemento <video>
+
+    // Efeito para criar e revogar a URL do objeto quando o arquivo de vídeo muda
+    useEffect(() => {
+        if (videoFile) {
+            // Cria uma URL de objeto para o arquivo de vídeo
+            const url = URL.createObjectURL(videoFile);
+            setVideoUrl(url);
+
+            // Limpa a URL do objeto quando o componente é desmontado ou o arquivo muda
+            return () => {
+                URL.revokeObjectURL(url);
+                setVideoUrl(''); // Limpa a URL para evitar reprodução de vídeo anterior
+            };
+        }
+    }, [videoFile]); // Depende do videoFile
+
+    // Função para lidar com a seleção de arquivo
+    const handleFileChange = (event) => {
+        const file = event.target.files[0];
+        if (file && file.type.startsWith('video/')) {
+            setVideoFile(file);
+        } else {
+            setVideoFile(null);
+            setVideoUrl('');
+            alert('Por favor, selecione um arquivo de vídeo válido.'); // Usa alert() conforme instruído
+        }
+    };
+
+    // Função para lidar com o clique no botão de seleção de arquivo
+    const handleSelectVideoClick = () => {
+        // Simula um clique no input de arquivo oculto
+        document.getElementById('videoInput').click();
+    };
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white font-sans flex flex-col items-center justify-center p-4">
+            <header className="text-center mb-8">
+                <h1 className="text-5xl font-extrabold text-blue-400 drop-shadow-lg">
+                    Meu Streaming Local
+                </h1>
+                <p className="mt-3 text-xl text-gray-300">Reproduza vídeos do seu computador</p>
+            </header>
+
+            <div className="bg-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-4xl border border-gray-600">
+                {/* Área do Player de Vídeo */}
+                <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden mb-6">
+                    {videoUrl ? (
+                        <video
+                            ref={videoRef}
+                            src={videoUrl}
+                            controls // Habilita os controles padrão do navegador (play/pause, volume, etc.)
+                            className="w-full h-full object-contain"
+                            autoPlay // Inicia a reprodução automaticamente ao carregar
+                        >
+                            Seu navegador não suporta a tag de vídeo.
+                        </video>
+                    ) : (
+                        <div className="flex items-center justify-center w-full h-full text-gray-400 text-lg">
+                            Nenhum vídeo selecionado.
+                        </div>
+                    )}
+                </div>
+
+                {/* Controles de Seleção de Vídeo */}
+                <div className="flex flex-col items-center justify-center space-y-4">
+                    {/* Input de arquivo oculto */}
+                    <input
+                        type="file"
+                        id="videoInput"
+                        accept="video/*"
+                        onChange={handleFileChange}
+                        className="hidden"
+                    />
+                    <button
+                        onClick={handleSelectVideoClick}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50"
+                    >
+                        Selecionar Vídeo
+                    </button>
+
+                    {videoFile && (
+                        <p className="text-gray-400 text-sm mt-2">
+                            Vídeo selecionado: <span className="font-semibold text-blue-300">{videoFile.name}</span>
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            <footer className="mt-8 text-gray-400 text-sm">
+                <p>&copy; 2024 Meu Streaming Local. Todos os direitos reservados.</p>
+            </footer>
+        </div>
+    );
+};
+
+export default App;
