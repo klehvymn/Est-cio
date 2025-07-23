@@ -1,0 +1,165 @@
+import React, { useState, useRef, useEffect } from 'react';
+
+const App = () => {
+    // Estados para as mensagens de cada "conta de WhatsApp"
+    const [messagesAccount1, setMessagesAccount1] = useState([]);
+    const [messagesAccount2, setMessagesAccount2] = useState([]);
+
+    // Estados para o texto da nova mensagem
+    const [newMessageText1, setNewMessageText1] = useState('');
+    const [newMessageText2, setNewMessageText2] = useState('');
+
+    // Referências para o final das áreas de chat para auto-scroll
+    const chatEndRef1 = useRef(null);
+    const chatEndRef2 = useRef(null);
+
+    // Efeito para rolar automaticamente para o final do chat quando novas mensagens são adicionadas
+    useEffect(() => {
+        chatEndRef1.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messagesAccount1]);
+
+    useEffect(() => {
+        chatEndRef2.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messagesAccount2]);
+
+    // Função para adicionar uma nova mensagem à Conta 1
+    const handleSendMessage1 = (e) => {
+        e.preventDefault();
+        if (newMessageText1.trim()) {
+            setMessagesAccount1(prevMessages => [
+                ...prevMessages,
+                { id: Date.now(), text: newMessageText1.trim(), sender: 'Você' }
+            ]);
+            setNewMessageText1('');
+        }
+    };
+
+    // Função para adicionar uma nova mensagem à Conta 2
+    const handleSendMessage2 = (e) => {
+        e.preventDefault();
+        if (newMessageText2.trim()) {
+            setMessagesAccount2(prevMessages => [
+                ...prevMessages,
+                { id: Date.now(), text: newMessageText2.trim(), sender: 'Você' }
+            ]);
+            setNewMessageText2('');
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-gray-100 font-sans text-gray-800 flex flex-col items-center p-4 sm:p-6 lg:p-8">
+            <header className="w-full max-w-6xl text-center mb-8">
+                <h1 className="text-4xl sm:text-5xl font-extrabold text-green-700 drop-shadow-md">
+                    Visualizador de Mensagens WhatsApp
+                </h1>
+                <p className="mt-2 text-lg sm:text-xl text-gray-600">
+                    Exibição lado a lado de conversas
+                </p>
+            </header>
+
+            <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Coluna da Conta 1 */}
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-[70vh] lg:h-[80vh]">
+                    <div className="p-4 bg-green-600 text-white rounded-t-xl font-bold text-xl sm:text-2xl text-center">
+                        Conta 1: Minhas Mensagens
+                    </div>
+                    <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
+                        {messagesAccount1.length === 0 ? (
+                            <p className="text-gray-500 text-center mt-8">Nenhuma mensagem ainda. Digite algo abaixo!</p>
+                        ) : (
+                            messagesAccount1.map(msg => (
+                                <div key={msg.id} className="mb-3">
+                                    <div className="bg-blue-100 p-3 rounded-lg shadow-sm max-w-[80%] ml-auto text-right">
+                                        <p className="text-sm font-semibold text-blue-800">{msg.sender}</p>
+                                        <p className="text-gray-800">{msg.text}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                        <div ref={chatEndRef1} /> {/* Elemento para rolagem automática */}
+                    </div>
+                    <form onSubmit={handleSendMessage1} className="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+                        <div className="flex space-x-3">
+                            <input
+                                type="text"
+                                value={newMessageText1}
+                                onChange={(e) => setNewMessageText1(e.target.value)}
+                                placeholder="Digite sua mensagem..."
+                                className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                            />
+                            <button
+                                type="submit"
+                                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-colors duration-200"
+                            >
+                                Enviar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                {/* Coluna da Conta 2 */}
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-[70vh] lg:h-[80vh]">
+                    <div className="p-4 bg-purple-600 text-white rounded-t-xl font-bold text-xl sm:text-2xl text-center">
+                        Conta 2: Conversa com Amigo
+                    </div>
+                    <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
+                        {messagesAccount2.length === 0 ? (
+                            <p className="text-gray-500 text-center mt-8">Nenhuma mensagem ainda. Digite algo abaixo!</p>
+                        ) : (
+                            messagesAccount2.map(msg => (
+                                <div key={msg.id} className="mb-3">
+                                    <div className="bg-purple-100 p-3 rounded-lg shadow-sm max-w-[80%] mr-auto">
+                                        <p className="text-sm font-semibold text-purple-800">{msg.sender}</p>
+                                        <p className="text-gray-800">{msg.text}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                        <div ref={chatEndRef2} /> {/* Elemento para rolagem automática */}
+                    </div>
+                    <form onSubmit={handleSendMessage2} className="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+                        <div className="flex space-x-3">
+                            <input
+                                type="text"
+                                value={newMessageText2}
+                                onChange={(e) => setNewMessageText2(e.target.value)}
+                                placeholder="Digite sua mensagem..."
+                                className="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            />
+                            <button
+                                type="submit"
+                                className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-colors duration-200"
+                            >
+                                Enviar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            {/* Estilos para a barra de rolagem personalizada */}
+            <style jsx>{`
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 8px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                    border-radius: 10px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background: #888;
+                    border-radius: 10px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background: #555;
+                }
+            `}</style>
+
+            <footer className="mt-8 text-gray-500 text-sm">
+                <p>&copy; 2024 Visualizador de Mensagens. Todos os direitos reservados.</p>
+            </footer>
+        </div>
+    );
+};
+
+export default App;
