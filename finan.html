@@ -1,0 +1,1113 @@
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+
+// Contexto para compartilhar o estado de autenticação e Firestore
+const AuthContext = createContext(null);
+
+// Componente principal da aplicação
+const App = () => {
+    const [db, setDb] = useState(null);
+    const [auth, setAuth] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
+    const [currentPage, setCurrentPage] = useState('dashboard'); // Estado para controlar a página atual
+
+    useEffect(() => {
+        // Inicializa o Firebase e a autenticação
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config is missing. Please ensure __firebase_config is provided.");
+            return;
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const firestoreDb = getFirestore(app);
+        const firebaseAuth = getAuth(app);
+
+        setDb(firestoreDb);
+        setAuth(firebaseAuth);
+
+        // Listener para o estado de autenticação
+        const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+            if (user) {
+                setUserId(user.uid);
+            } else {
+                // Tenta autenticar com o token personalizado se disponível, caso contrário, anonimamente
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(firebaseAuth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(firebaseAuth);
+                    }
+                } catch (error) {
+                    console.error("Erro ao autenticar:", error);
+                }
+            }
+            setIsAuthReady(true);
+        });
+
+        return () => unsubscribe(); // Limpa o listener ao desmontar
+    }, []);
+
+    if (!isAuthReady) {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                <div className="text-lg font-semibold text-gray-700">Carregando aplicativo...</div>
+            </div>
+        );
+    }
+
+    return (
+        <AuthContext.Provider value={{ db, auth, userId, isAuthReady }}>
+            <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
+                {/* Cabeçalho */}
+                <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-4 shadow-md">
+                    <div className="container mx-auto flex justify-between items-center">
+                        <h1 className="text-3xl font-bold rounded-md px-3 py-1 bg-blue-700 bg-opacity-70">
+                            Controle Financeiro
+                        </h1>
+                        <nav>
+                            <ul className="flex space-x-4">
+                                <li>
+                                    <button
+                                        onClick={() => setCurrentPage('dashboard')}
+                                        className={`px-4 py-2 rounded-md transition-colors duration-200 ${
+                                            currentPage === 'dashboard' ? 'bg-blue-700 text-white shadow-lg' : 'hover:bg-blue-700 hover:text-white'
+                                        }`}
+                                    >
+                                        Dashboard
+                                    </button>
+                                </li>
+                                <li>
+                                    <button
+                                        onClick={() => setCurrentPage('transactions')}
+                                        className={`px-4 py-2 rounded-md transition-colors duration-200 ${
+                                            currentPage === 'transactions' ? 'bg-blue-700 text-white shadow-lg' : 'hover:bg-blue-700 hover:text-white'
+                                        }`}
+                                    >
+                                        Transações
+                                    </button>
+                                </li>
+                                <li>
+                                    <button
+                                        onClick={() => setCurrentPage('accounts')}
+                                        className={`px-4 py-2 rounded-md transition-colors duration-200 ${
+                                            currentPage === 'accounts' ? 'bg-blue-700 text-white shadow-lg' : 'hover:bg-blue-700 hover:text-white'
+                                        }`}
+                                    >
+                                        Contas
+                                    </button>
+                                </li>
+                                <li>
+                                    <button
+                                        onClick={() => setCurrentPage('budgets')}
+                                        className={`px-4 py-2 rounded-md transition-colors duration-200 ${
+                                            currentPage === 'budgets' ? 'bg-blue-700 text-white shadow-lg' : 'hover:bg-blue-700 hover:text-white'
+                                        }`}
+                                    >
+                                        Orçamentos
+                                    </button>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                </header>
+
+                <main className="container mx-auto p-6">
+                    {userId && (
+                        <div className="bg-blue-100 text-blue-800 p-3 mb-6 rounded-lg shadow-sm text-sm">
+                            Seu ID de Usuário: <span className="font-mono break-all">{userId}</span>
+                        </div>
+                    )}
+                    {/* Renderiza a página atual com base no estado */}
+                    {currentPage === 'dashboard' && <Dashboard />}
+                    {currentPage === 'transactions' && <Transactions />}
+                    {currentPage === 'accounts' && <Accounts />}
+                    {currentPage === 'budgets' && <Budgeting />}
+                </main>
+            </div>
+        </AuthContext.Provider>
+    );
+};
+
+// Componente Dashboard
+const Dashboard = () => {
+    const { db, userId, isAuthReady } = useContext(AuthContext);
+    const [transactions, setTransactions] = useState([]);
+    const [accounts, setAccounts] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId || !isAuthReady) return;
+
+        setLoading(true);
+        const unsubscribeTransactions = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/transactions`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setTransactions(fetchedTransactions);
+            },
+            (error) => console.error("Erro ao buscar transações:", error)
+        );
+
+        const unsubscribeAccounts = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/accounts`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedAccounts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setAccounts(fetchedAccounts);
+                setLoading(false);
+            },
+            (error) => console.error("Erro ao buscar contas:", error)
+        );
+
+        return () => {
+            unsubscribeTransactions();
+            unsubscribeAccounts();
+        };
+    }, [db, userId, isAuthReady]);
+
+    // Calcula o saldo total
+    const totalBalance = accounts.reduce((sum, account) => sum + (account.balance || 0), 0);
+
+    // Calcula receitas e despesas do mês atual
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+
+    const monthlyIncome = transactions
+        .filter(t => t.type === 'income' && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
+        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+
+    const monthlyExpenses = transactions
+        .filter(t => t.type === 'expense' && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
+        .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-lg text-gray-600">Carregando dados do dashboard...</div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Cartão de Saldo Total */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 transform hover:scale-105 transition-transform duration-300">
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Saldo Total</h2>
+                <p className="text-4xl font-bold text-blue-600">R$ {totalBalance.toFixed(2)}</p>
+                <p className="text-sm text-gray-500 mt-2">Soma de todas as suas contas.</p>
+            </div>
+
+            {/* Cartão de Receitas do Mês */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 transform hover:scale-105 transition-transform duration-300">
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Receitas do Mês</h2>
+                <p className="text-4xl font-bold text-green-600">R$ {monthlyIncome.toFixed(2)}</p>
+                <p className="text-sm text-gray-500 mt-2">Entradas no mês atual.</p>
+            </div>
+
+            {/* Cartão de Despesas do Mês */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 transform hover:scale-105 transition-transform duration-300">
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Despesas do Mês</h2>
+                <p className="text-4xl font-bold text-red-600">R$ {monthlyExpenses.toFixed(2)}</p>
+                <p className="text-sm text-gray-500 mt-2">Saídas no mês atual.</p>
+            </div>
+
+            {/* Seção de Transações Recentes */}
+            <div className="lg:col-span-3 bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-700 mb-4">Transações Recentes</h2>
+                {transactions.length > 0 ? (
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descrição</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Valor</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Conta</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {transactions.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5).map(t => (
+                                    <tr key={t.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.date}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.description}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <span className={t.type === 'income' ? 'text-green-600' : 'text-red-600'}>
+                                                R$ {parseFloat(t.amount).toFixed(2)}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.type === 'income' ? 'Receita' : 'Despesa'}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.category}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{accounts.find(acc => acc.id === t.accountId)?.name || 'N/A'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p className="text-gray-500">Nenhuma transação recente para exibir.</p>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Componente Transações
+const Transactions = () => {
+    const { db, userId, isAuthReady } = useContext(AuthContext);
+    const [transactions, setTransactions] = useState([]);
+    const [accounts, setAccounts] = useState([]);
+    const [newTransaction, setNewTransaction] = useState({
+        type: 'expense',
+        description: '',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        category: 'Outros',
+        accountId: ''
+    });
+    const [editingTransactionId, setEditingTransactionId] = useState(null);
+    const [showModal, setShowModal] = useState(false);
+    const [modalContent, setModalContent] = useState('');
+    const [modalAction, setModalAction] = useState(null);
+
+    // Categorias padrão
+    const defaultCategories = {
+        expense: ['Moradia', 'Alimentação', 'Transporte', 'Lazer', 'Educação', 'Saúde', 'Contas', 'Outros'],
+        income: ['Salário', 'Freelance', 'Investimentos', 'Presente', 'Outros']
+    };
+
+    useEffect(() => {
+        if (!db || !userId || !isAuthReady) return;
+
+        // Listener para transações
+        const unsubscribeTransactions = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/transactions`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setTransactions(fetchedTransactions);
+            },
+            (error) => console.error("Erro ao buscar transações:", error)
+        );
+
+        // Listener para contas (necessário para o dropdown de contas)
+        const unsubscribeAccounts = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/accounts`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedAccounts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setAccounts(fetchedAccounts);
+                if (fetchedAccounts.length > 0 && !newTransaction.accountId) {
+                    setNewTransaction(prev => ({ ...prev, accountId: fetchedAccounts[0].id }));
+                }
+            },
+            (error) => console.error("Erro ao buscar contas:", error)
+        );
+
+        return () => {
+            unsubscribeTransactions();
+            unsubscribeAccounts();
+        };
+    }, [db, userId, isAuthReady]);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setNewTransaction(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleTypeChange = (e) => {
+        const newType = e.target.value;
+        setNewTransaction(prev => ({
+            ...prev,
+            type: newType,
+            category: defaultCategories[newType][0] // Reset category to default for new type
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) return;
+
+        const amountValue = parseFloat(newTransaction.amount);
+        if (isNaN(amountValue) || amountValue <= 0) {
+            setModalContent('Por favor, insira um valor válido para a transação.');
+            setShowModal(true);
+            return;
+        }
+
+        try {
+            const transactionData = { ...newTransaction, amount: amountValue };
+
+            if (editingTransactionId) {
+                // Atualiza transação existente
+                await updateDoc(doc(db, `artifacts/${__app_id}/users/${userId}/transactions`, editingTransactionId), transactionData); // Caminho corrigido
+                setEditingTransactionId(null);
+            } else {
+                // Adiciona nova transação
+                await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/transactions`), transactionData); // Caminho corrigido
+            }
+
+            // Atualiza o saldo da conta
+            const accountRef = doc(db, `artifacts/${__app_id}/users/${userId}/accounts`, newTransaction.accountId); // Caminho corrigido
+            const accountSnap = await getDoc(accountRef);
+            if (accountSnap.exists()) {
+                const currentBalance = accountSnap.data().balance || 0;
+                let updatedBalance = currentBalance;
+
+                // Se estiver editando, precisamos recalcular o impacto da transação original e da nova
+                if (editingTransactionId) {
+                    const originalTransaction = transactions.find(t => t.id === editingTransactionId);
+                    if (originalTransaction) {
+                        // Reverte o impacto da transação original
+                        updatedBalance -= (originalTransaction.type === 'income' ? originalTransaction.amount : -originalTransaction.amount);
+                    }
+                }
+                // Aplica o impacto da nova/editada transação
+                updatedBalance += (newTransaction.type === 'income' ? amountValue : -amountValue);
+
+                await updateDoc(accountRef, { balance: updatedBalance });
+            }
+
+            // Limpa o formulário
+            setNewTransaction({
+                type: 'expense',
+                description: '',
+                amount: '',
+                date: new Date().toISOString().split('T')[0],
+                category: defaultCategories.expense[0],
+                accountId: accounts.length > 0 ? accounts[0].id : ''
+            });
+        } catch (error) {
+            console.error("Erro ao salvar transação:", error);
+            setModalContent('Erro ao salvar transação. Tente novamente.');
+            setShowModal(true);
+        }
+    };
+
+    const handleEdit = (transaction) => {
+        setEditingTransactionId(transaction.id);
+        setNewTransaction({
+            type: transaction.type,
+            description: transaction.description,
+            amount: transaction.amount.toString(), // Converter para string para o input
+            date: transaction.date,
+            category: transaction.category,
+            accountId: transaction.accountId
+        });
+    };
+
+    const handleDelete = (id) => {
+        setModalContent('Tem certeza que deseja excluir esta transação? Esta ação é irreversível.');
+        setShowModal(true);
+        setModalAction(() => async () => {
+            if (!db || !userId) return;
+            try {
+                const transactionToDelete = transactions.find(t => t.id === id);
+                if (!transactionToDelete) return;
+
+                // Reverte o impacto no saldo da conta antes de deletar
+                const accountRef = doc(db, `artifacts/${__app_id}/users/${userId}/accounts`, transactionToDelete.accountId); // Caminho corrigido
+                const accountSnap = await getDoc(accountRef);
+                if (accountSnap.exists()) {
+                    const currentBalance = accountSnap.data().balance || 0;
+                    const updatedBalance = currentBalance - (transactionToDelete.type === 'income' ? transactionToDelete.amount : -transactionToDelete.amount);
+                    await updateDoc(accountRef, { balance: updatedBalance });
+                }
+
+                await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/transactions`, id)); // Caminho corrigido
+                setModalContent('Transação excluída com sucesso!');
+                setShowModal(true);
+            } catch (error) {
+                console.error("Erro ao excluir transação:", error);
+                setModalContent('Erro ao excluir transação. Tente novamente.');
+                setShowModal(true);
+            } finally {
+                setModalAction(null);
+            }
+        });
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Gerenciar Transações</h2>
+
+            {/* Formulário de Adição/Edição de Transação */}
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <div className="col-span-full">
+                    <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                    <select
+                        id="type"
+                        name="type"
+                        value={newTransaction.type}
+                        onChange={handleTypeChange}
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md shadow-sm"
+                    >
+                        <option value="expense">Despesa</option>
+                        <option value="income">Receita</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                    <input
+                        type="text"
+                        id="description"
+                        name="description"
+                        value={newTransaction.description}
+                        onChange={handleChange}
+                        placeholder="Ex: Compras no supermercado"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div>
+                    <label htmlFor="amount" className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>
+                    <input
+                        type="number"
+                        id="amount"
+                        name="amount"
+                        value={newTransaction.amount}
+                        onChange={handleChange}
+                        step="0.01"
+                        min="0.01"
+                        placeholder="0.00"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div>
+                    <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">Data</label>
+                    <input
+                        type="date"
+                        id="date"
+                        name="date"
+                        value={newTransaction.date}
+                        onChange={handleChange}
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div>
+                    <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
+                    <select
+                        id="category"
+                        name="category"
+                        value={newTransaction.category}
+                        onChange={handleChange}
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md shadow-sm"
+                    >
+                        {defaultCategories[newTransaction.type].map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="accountId" className="block text-sm font-medium text-gray-700 mb-1">Conta</label>
+                    <select
+                        id="accountId"
+                        name="accountId"
+                        value={newTransaction.accountId}
+                        onChange={handleChange}
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md shadow-sm"
+                        required
+                    >
+                        {accounts.length > 0 ? (
+                            accounts.map(account => (
+                                <option key={account.id} value={account.id}>{account.name}</option>
+                            ))
+                        ) : (
+                            <option value="">Adicione uma conta primeiro</option>
+                        )}
+                    </select>
+                </div>
+                <div className="col-span-full flex justify-end">
+                    <button
+                        type="submit"
+                        disabled={accounts.length === 0}
+                        className={`inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200 ${
+                            accounts.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                    >
+                        {editingTransactionId ? 'Atualizar Transação' : 'Adicionar Transação'}
+                    </button>
+                    {editingTransactionId && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setEditingTransactionId(null);
+                                setNewTransaction({
+                                    type: 'expense',
+                                    description: '',
+                                    amount: '',
+                                    date: new Date().toISOString().split('T')[0],
+                                    category: defaultCategories.expense[0],
+                                    accountId: accounts.length > 0 ? accounts[0].id : ''
+                                });
+                            }}
+                            className="ml-4 inline-flex items-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                        >
+                            Cancelar Edição
+                        </button>
+                    )}
+                </div>
+            </form>
+
+            {/* Lista de Transações */}
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Todas as Transações</h3>
+            {transactions.length > 0 ? (
+                <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-md">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descrição</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Valor</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Conta</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {transactions.sort((a, b) => new Date(b.date) - new Date(a.date)).map(t => (
+                                <tr key={t.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.date}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.description}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <span className={t.type === 'income' ? 'text-green-600' : 'text-red-600'}>
+                                            R$ {parseFloat(t.amount).toFixed(2)}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.type === 'income' ? 'Receita' : 'Despesa'}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.category}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{accounts.find(acc => acc.id === t.accountId)?.name || 'N/A'}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button
+                                            onClick={() => handleEdit(t)}
+                                            className="text-blue-600 hover:text-blue-900 mr-3 transition-colors duration-200"
+                                        >
+                                            Editar
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(t.id)}
+                                            className="text-red-600 hover:text-red-900 transition-colors duration-200"
+                                        >
+                                            Excluir
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p className="text-gray-500 p-4">Nenhuma transação registrada. Comece adicionando uma!</p>
+            )}
+
+            {/* Modal de Confirmação/Alerta */}
+            {showModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                        <p className="text-lg font-semibold mb-4">{modalContent}</p>
+                        <div className="flex justify-end space-x-3">
+                            {modalAction && (
+                                <button
+                                    onClick={() => {
+                                        modalAction();
+                                        setShowModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200"
+                                >
+                                    Confirmar
+                                </button>
+                            )}
+                            <button
+                                onClick={() => {
+                                    setShowModal(false);
+                                    setModalAction(null); // Limpa a ação ao fechar
+                                }}
+                                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Componente Contas
+const Accounts = () => {
+    const { db, userId, isAuthReady } = useContext(AuthContext);
+    const [accounts, setAccounts] = useState([]);
+    const [newAccount, setNewAccount] = useState({ name: '', balance: '' });
+    const [editingAccountId, setEditingAccountId] = useState(null);
+    const [showModal, setShowModal] = useState(false);
+    const [modalContent, setModalContent] = useState('');
+    const [modalAction, setModalAction] = useState(null);
+
+    useEffect(() => {
+        if (!db || !userId || !isAuthReady) return;
+
+        const unsubscribe = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/accounts`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedAccounts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setAccounts(fetchedAccounts);
+            },
+            (error) => console.error("Erro ao buscar contas:", error)
+        );
+
+        return () => unsubscribe();
+    }, [db, userId, isAuthReady]);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setNewAccount(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) return;
+
+        const balanceValue = parseFloat(newAccount.balance);
+        if (isNaN(balanceValue)) {
+            setModalContent('Por favor, insira um saldo inicial válido.');
+            setShowModal(true);
+            return;
+        }
+
+        try {
+            const accountData = { ...newAccount, balance: balanceValue };
+
+            if (editingAccountId) {
+                await updateDoc(doc(db, `artifacts/${__app_id}/users/${userId}/accounts`, editingAccountId), accountData); // Caminho corrigido
+                setEditingAccountId(null);
+            } else {
+                await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/accounts`), accountData); // Caminho corrigido
+            }
+            setNewAccount({ name: '', balance: '' });
+        } catch (error) {
+            console.error("Erro ao salvar conta:", error);
+            setModalContent('Erro ao salvar conta. Tente novamente.');
+            setShowModal(true);
+        }
+    };
+
+    const handleEdit = (account) => {
+        setEditingAccountId(account.id);
+        setNewAccount({ name: account.name, balance: account.balance.toString() });
+    };
+
+    const handleDelete = (id) => {
+        setModalContent('Tem certeza que deseja excluir esta conta? Todas as transações associadas a ela permanecerão, mas não serão mais vinculadas a uma conta existente.');
+        setShowModal(true);
+        setModalAction(() => async () => {
+            if (!db || !userId) return;
+            try {
+                await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/accounts`, id)); // Caminho corrigido
+                setModalContent('Conta excluída com sucesso!');
+                setShowModal(true);
+            } catch (error) {
+                console.error("Erro ao excluir conta:", error);
+                setModalContent('Erro ao excluir conta. Tente novamente.');
+                setShowModal(true);
+            } finally {
+                setModalAction(null);
+            }
+        });
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Gerenciar Contas</h2>
+
+            {/* Formulário de Adição/Edição de Conta */}
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <div>
+                    <label htmlFor="accountName" className="block text-sm font-medium text-gray-700 mb-1">Nome da Conta</label>
+                    <input
+                        type="text"
+                        id="accountName"
+                        name="name"
+                        value={newAccount.name}
+                        onChange={handleChange}
+                        placeholder="Ex: NuBank, Carteira"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div>
+                    <label htmlFor="accountBalance" className="block text-sm font-medium text-gray-700 mb-1">Saldo Inicial (R$)</label>
+                    <input
+                        type="number"
+                        id="accountBalance"
+                        name="balance"
+                        value={newAccount.balance}
+                        onChange={handleChange}
+                        step="0.01"
+                        placeholder="0.00"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div className="col-span-full flex justify-end">
+                    <button
+                        type="submit"
+                        className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+                    >
+                        {editingAccountId ? 'Atualizar Conta' : 'Adicionar Conta'}
+                    </button>
+                    {editingAccountId && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setEditingAccountId(null);
+                                setNewAccount({ name: '', balance: '' });
+                            }}
+                            className="ml-4 inline-flex items-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                        >
+                            Cancelar Edição
+                        </button>
+                    )}
+                </div>
+            </form>
+
+            {/* Lista de Contas */}
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Minhas Contas</h3>
+            {accounts.length > 0 ? (
+                <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-md">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Saldo</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {accounts.map(account => (
+                                <tr key={account.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{account.name}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">R$ {parseFloat(account.balance).toFixed(2)}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button
+                                            onClick={() => handleEdit(account)}
+                                            className="text-blue-600 hover:text-blue-900 mr-3 transition-colors duration-200"
+                                        >
+                                            Editar
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(account.id)}
+                                            className="text-red-600 hover:text-red-900 transition-colors duration-200"
+                                        >
+                                            Excluir
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p className="text-gray-500 p-4">Nenhuma conta registrada. Adicione sua primeira conta!</p>
+            )}
+
+            {/* Modal de Confirmação/Alerta */}
+            {showModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                        <p className="text-lg font-semibold mb-4">{modalContent}</p>
+                        <div className="flex justify-end space-x-3">
+                            {modalAction && (
+                                <button
+                                    onClick={() => {
+                                        modalAction();
+                                        setShowModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200"
+                                >
+                                    Confirmar
+                                </button>
+                            )}
+                            <button
+                                onClick={() => {
+                                    setShowModal(false);
+                                    setModalAction(null);
+                                }}
+                                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Componente Orçamentos
+const Budgeting = () => {
+    const { db, userId, isAuthReady } = useContext(AuthContext);
+    const [budgets, setBudgets] = useState([]);
+    const [newBudget, setNewBudget] = useState({ category: 'Moradia', limit: '' });
+    const [editingBudgetId, setEditingBudgetId] = useState(null);
+    const [transactions, setTransactions] = useState([]); // Para calcular o gasto atual
+    const [showModal, setShowModal] = useState(false);
+    const [modalContent, setModalContent] = useState('');
+    const [modalAction, setModalAction] = useState(null);
+
+    // Categorias de despesas (reutilizando do componente Transações)
+    const expenseCategories = ['Moradia', 'Alimentação', 'Transporte', 'Lazer', 'Educação', 'Saúde', 'Contas', 'Outros'];
+
+    useEffect(() => {
+        if (!db || !userId || !isAuthReady) return;
+
+        // Listener para orçamentos
+        const unsubscribeBudgets = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/budgets`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedBudgets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setBudgets(fetchedBudgets);
+            },
+            (error) => console.error("Erro ao buscar orçamentos:", error)
+        );
+
+        // Listener para transações (para calcular o gasto atual em cada categoria)
+        const unsubscribeTransactions = onSnapshot(
+            collection(db, `artifacts/${__app_id}/users/${userId}/transactions`), // Caminho corrigido
+            (snapshot) => {
+                const fetchedTransactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setTransactions(fetchedTransactions);
+            },
+            (error) => console.error("Erro ao buscar transações para orçamento:", error)
+        );
+
+        return () => {
+            unsubscribeBudgets();
+            unsubscribeTransactions();
+        };
+    }, [db, userId, isAuthReady]);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setNewBudget(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) return;
+
+        const limitValue = parseFloat(newBudget.limit);
+        if (isNaN(limitValue) || limitValue <= 0) {
+            setModalContent('Por favor, insira um limite válido para o orçamento.');
+            setShowModal(true);
+            return;
+        }
+
+        try {
+            const budgetData = { ...newBudget, limit: limitValue };
+
+            if (editingBudgetId) {
+                await updateDoc(doc(db, `artifacts/${__app_id}/users/${userId}/budgets`, editingBudgetId), budgetData); // Caminho corrigido
+                setEditingBudgetId(null);
+            } else {
+                // Verifica se já existe um orçamento para a categoria
+                const existingBudgetQuery = query(
+                    collection(db, `artifacts/${__app_id}/users/${userId}/budgets`), // Caminho corrigido
+                    where('category', '==', newBudget.category)
+                );
+                const existingBudgetSnap = await getDocs(existingBudgetQuery);
+
+                if (!existingBudgetSnap.empty) {
+                    setModalContent(`Já existe um orçamento para a categoria "${newBudget.category}". Edite-o se desejar alterá-lo.`);
+                    setShowModal(true);
+                    return;
+                }
+
+                await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/budgets`), budgetData); // Caminho corrigido
+            }
+            setNewBudget({ category: expenseCategories[0], limit: '' });
+        } catch (error) {
+            console.error("Erro ao salvar orçamento:", error);
+            setModalContent('Erro ao salvar orçamento. Tente novamente.');
+            setShowModal(true);
+        }
+    };
+
+    const handleEdit = (budget) => {
+        setEditingBudgetId(budget.id);
+        setNewBudget({ category: budget.category, limit: budget.limit.toString() });
+    };
+
+    const handleDelete = (id) => {
+        setModalContent('Tem certeza que deseja excluir este orçamento?');
+        setShowModal(true);
+        setModalAction(() => async () => {
+            if (!db || !userId) return;
+            try {
+                await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/budgets`, id)); // Caminho corrigido
+                setModalContent('Orçamento excluído com sucesso!');
+                setShowModal(true);
+            } catch (error) {
+                console.error("Erro ao excluir orçamento:", error);
+                setModalContent('Erro ao excluir orçamento. Tente novamente.');
+                setShowModal(true);
+            } finally {
+                setModalAction(null);
+            }
+        });
+    };
+
+    // Função para calcular o gasto atual de uma categoria no mês atual
+    const getCurrentSpending = (category) => {
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        return transactions
+            .filter(t => t.type === 'expense' && t.category === category && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
+            .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Gerenciar Orçamentos</h2>
+
+            {/* Formulário de Adição/Edição de Orçamento */}
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 bg-gray-50 rounded-lg shadow-inner">
+                <div>
+                    <label htmlFor="budgetCategory" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
+                    <select
+                        id="budgetCategory"
+                        name="category"
+                        value={newBudget.category}
+                        onChange={handleChange}
+                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md shadow-sm"
+                        required
+                    >
+                        {expenseCategories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="budgetLimit" className="block text-sm font-medium text-gray-700 mb-1">Limite (R$)</label>
+                    <input
+                        type="number"
+                        id="budgetLimit"
+                        name="limit"
+                        value={newBudget.limit}
+                        onChange={handleChange}
+                        step="0.01"
+                        min="0.01"
+                        placeholder="0.00"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        required
+                    />
+                </div>
+                <div className="col-span-full flex justify-end">
+                    <button
+                        type="submit"
+                        className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+                    >
+                        {editingBudgetId ? 'Atualizar Orçamento' : 'Adicionar Orçamento'}
+                    </button>
+                    {editingBudgetId && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setEditingBudgetId(null);
+                                setNewBudget({ category: expenseCategories[0], limit: '' });
+                            }}
+                            className="ml-4 inline-flex items-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                        >
+                            Cancelar Edição
+                        </button>
+                    )}
+                </div>
+            </form>
+
+            {/* Lista de Orçamentos */}
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Meus Orçamentos Mensais</h3>
+            {budgets.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {budgets.map(budget => {
+                        const currentSpending = getCurrentSpending(budget.category);
+                        const percentageUsed = (currentSpending / budget.limit) * 100;
+                        const progressBarColor = percentageUsed < 75 ? 'bg-green-500' : percentageUsed < 100 ? 'bg-yellow-500' : 'bg-red-500';
+
+                        return (
+                            <div key={budget.id} className="bg-gray-50 p-5 rounded-lg shadow-md border border-gray-200">
+                                <h4 className="text-lg font-semibold text-gray-700 mb-2">{budget.category}</h4>
+                                <p className="text-sm text-gray-600">Limite: <span className="font-medium">R$ {parseFloat(budget.limit).toFixed(2)}</span></p>
+                                <p className="text-sm text-gray-600">Gasto Atual: <span className="font-medium">R$ {currentSpending.toFixed(2)}</span></p>
+                                <div className="w-full bg-gray-200 rounded-full h-2.5 mt-3">
+                                    <div
+                                        className={`${progressBarColor} h-2.5 rounded-full`}
+                                        style={{ width: `${Math.min(100, percentageUsed)}%` }}
+                                    ></div>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">{percentageUsed.toFixed(1)}% utilizado</p>
+                                <div className="mt-4 flex justify-end space-x-2">
+                                    <button
+                                        onClick={() => handleEdit(budget)}
+                                        className="text-blue-600 hover:text-blue-900 text-sm transition-colors duration-200"
+                                    >
+                                        Editar
+                                    </button>
+                                    <button
+                                        onClick={() => handleDelete(budget.id)}
+                                        className="text-red-600 hover:text-red-900 text-sm transition-colors duration-200"
+                                    >
+                                        Excluir
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : (
+                <p className="text-gray-500 p-4">Nenhum orçamento definido. Comece a planejar seus gastos!</p>
+            )}
+
+            {/* Modal de Confirmação/Alerta */}
+            {showModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                        <p className="text-lg font-semibold mb-4">{modalContent}</p>
+                        <div className="flex justify-end space-x-3">
+                            {modalAction && (
+                                <button
+                                    onClick={() => {
+                                        modalAction();
+                                        setShowModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-200"
+                                >
+                                    Confirmar
+                                </button>
+                            )}
+                            <button
+                                onClick={() => {
+                                    setShowModal(false);
+                                    setModalAction(null);
+                                }}
+                                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition-colors duration-200"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default App;
